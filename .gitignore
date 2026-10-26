@@ -1,0 +1,7 @@
+config.yaml
+Logs/
+*.exe
+*.yaml
+*.mod
+*.sum
+*.sql

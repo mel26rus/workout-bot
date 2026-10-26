@@ -1,0 +1,26 @@
+{{define "content"}}
+<h2>Занимающиеся</h2>
+<table>
+<tr><th>Человек</th><th>Челлендж</th><th>Статус</th><th>Прогресс</th></tr>
+{{range .Participants}}
+<tr>
+<td>{{.FirstName}} {{.Surname}}{{if .Username}} (@{{.Username}}){{end}}</td>
+<td>{{.DocWorkoutName}}</td>
+{{if .IsPaid}}
+<td>Оплачено, старт {{.StartDate.Format "02.01.2006"}}</td>
+<td>Выполнено {{.Done}} из {{.Total}} (отправлено {{.Sent}})</td>
+{{else}}
+<td>
+Ждёт оплаты
+<form method="post" action="/users/{{.UserID}}/paid" onsubmit="return confirm('Подтвердить оплату?')">
+<button type="submit">Оплачено</button>
+</form>
+</td>
+<td>—</td>
+{{end}}
+</tr>
+{{else}}
+<tr><td colspan="4">Пока никого нет</td></tr>
+{{end}}
+</table>
+{{end}}

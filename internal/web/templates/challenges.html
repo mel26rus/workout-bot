@@ -1,0 +1,22 @@
+{{define "content"}}
+<h2>Челленджи</h2>
+<table>
+<tr><th>Название</th><th>Описание</th><th>Ссылка на оплату</th></tr>
+{{range .Challenges}}
+<tr><td>{{.Name}}</td><td>{{.Description}}</td><td>{{.PaymentURL}}</td></tr>
+{{else}}
+<tr><td colspan="3">Челленджей пока нет</td></tr>
+{{end}}
+</table>
+
+<h3>Новый челлендж</h3>
+<form method="post" action="/challenges">
+<label for="name">Название</label>
+<input type="text" id="name" name="name" required>
+<label for="description">Описание</label>
+<textarea id="description" name="description" rows="6"></textarea>
+<label for="payment_url">Ссылка на оплату</label>
+<input type="text" id="payment_url" name="payment_url">
+<p><button type="submit">Создать</button></p>
+</form>
+{{end}}
