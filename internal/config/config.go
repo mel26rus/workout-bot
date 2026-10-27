@@ -20,9 +20,8 @@ type LogConfig struct {
 	File    bool   `yaml:"file"`
 }
 type WebConfig struct {
-	Port      int    `yaml:"port"`
-	Password  string `yaml:"password"`
-	MaxFileMB int    `yaml:"max_file_mb"`
+	Port     int    `yaml:"port"`
+	Password string `yaml:"password"`
 }
 
 type AppConfig struct {
@@ -31,7 +30,8 @@ type AppConfig struct {
 	Web       WebConfig      `yaml:"web"`
 	BotKey    string         `yaml:"bot_key"`
 	BotProxy  string         `yaml:"bot_proxy"`
-	SendTime  string         `yaml:"send_time"` // время рассылки тренировок, ЧЧ:ММ
+	ChannelID int64          `yaml:"channel_id"` // закрытый канал тренера, откуда берутся тренировки
+	SendTime  string         `yaml:"send_time"`  // время рассылки по умолчанию, ЧЧ:ММ; тренер меняет его в веб-модуле
 	TimeZone  string         `yaml:"time_zone"`
 	AppName   string         `yaml:"app_name"`
 
@@ -60,15 +60,15 @@ func defaultConfig() *AppConfig {
 			URL: DefaultDatabaseURL,
 		},
 		Web: WebConfig{
-			Port:      8080,
-			Password:  "",
-			MaxFileMB: 50,
+			Port:     8080,
+			Password: "",
 		},
-		BotKey:   "",
-		BotProxy: "",
-		SendTime: "08:00",
-		TimeZone: "Europe/Moscow",
-		AppName:  "WorkoutBot",
+		BotKey:    "",
+		BotProxy:  "",
+		ChannelID: 0,
+		SendTime:  "08:00",
+		TimeZone:  "Europe/Moscow",
+		AppName:   "WorkoutBot",
 	}
 }
 
@@ -82,7 +82,7 @@ func Load(fileName string) (*AppConfig, error) {
 		if saveErr := Save(defConfig, configFile); saveErr != nil {
 			return defConfig, saveErr
 		}
-		return defConfig, fmt.Errorf("конфиг не найден, создан %s с настройками по умолчанию: заполните его (web.password, bot_key) и запустите снова", configFile)
+		return defConfig, fmt.Errorf("конфиг не найден, создан %s с настройками по умолчанию: заполните его (web.password, bot_key, channel_id) и запустите снова", configFile)
 	}
 
 	var cfg AppConfig

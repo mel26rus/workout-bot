@@ -12,12 +12,22 @@ type scheduledJob struct {
 }
 
 type Scheduler struct {
-	jobs []*scheduledJob
+	jobs  []*scheduledJob
+	reset chan struct{}
 }
 
 func New() *Scheduler {
 	return &Scheduler{
-		jobs: make([]*scheduledJob, 0),
+		jobs:  make([]*scheduledJob, 0),
+		reset: make(chan struct{}, 1),
+	}
+}
+
+// Reset пересчитывает время ближайшего запуска всех задач, например после смены времени рассылки
+func (s *Scheduler) Reset() {
+	select {
+	case s.reset <- struct{}{}:
+	default:
 	}
 }
 
@@ -58,6 +68,13 @@ func (s *Scheduler) Run(ctx context.Context) {
 			timer.Stop()
 			slog.Info("Scheduler stopped")
 			return
+
+		case <-s.reset:
+
+			timer.Stop()
+			for _, job := range s.jobs {
+				job.nextRun = job.job.NextRun(time.Now())
+			}
 
 		case <-timer.C:
 

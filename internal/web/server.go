@@ -24,32 +24,61 @@ var templatesFS embed.FS
 // pageData - данные для всех страниц
 type pageData struct {
 	Msg          string
-	MaxFileMB    int
+	TimeZone     string
+	SendTime     string
 	Participants []model.Participant
 	Challenges   []model.DocWorkout
-	Days         []model.DocTabWorkoutInfo
+	Posts        []model.ChannelPostInfo
+}
+
+// PaymentNotifier сообщает человеку в Telegram, что оплата подтверждена
+type PaymentNotifier interface {
+	NotifyPaymentConfirmed(ctx context.Context, c model.PaymentConfirmation) error
 }
 
 type Server struct {
 	cfg                   config.WebConfig
+	timeZone              string
 	userService           *service.UserService
 	docWorkoutService     *service.DocWorkoutService
 	docTabWorkoutService  *service.DocTabWorkoutService
 	docUserWorkoutService *service.DocUserWorkoutService
+	channelPostService    *service.ChannelPostService
+	settingsService       *service.SettingsService
+	notifier              PaymentNotifier
+	onSendTimeChanged     func()
 	pages                 map[string]*template.Template
 }
 
 func NewServer(
 	cfg config.WebConfig,
+	timeZone string,
 	userService *service.UserService,
 	docWorkoutService *service.DocWorkoutService,
 	docTabWorkoutService *service.DocTabWorkoutService,
 	docUserWorkoutService *service.DocUserWorkoutService,
+	channelPostService *service.ChannelPostService,
+	settingsService *service.SettingsService,
+	notifier PaymentNotifier,
+	onSendTimeChanged func(),
 ) (*Server, error) {
 
 	funcs := template.FuncMap{
 		"mb": func(b int64) string {
 			return fmt.Sprintf("%.1f МБ", float64(b)/(1024*1024))
+		},
+		"mediaLabel": func(mediaType string) string {
+			switch mediaType {
+			case "video":
+				return "видео"
+			case "document":
+				return "файл"
+			case "photo":
+				return "фото"
+			case "text":
+				return "текст"
+			}
+			return "другое"
 		},
 	}
 
@@ -64,10 +93,15 @@ func NewServer(
 
 	return &Server{
 		cfg:                   cfg,
+		timeZone:              timeZone,
 		userService:           userService,
 		docWorkoutService:     docWorkoutService,
 		docTabWorkoutService:  docTabWorkoutService,
 		docUserWorkoutService: docUserWorkoutService,
+		channelPostService:    channelPostService,
+		settingsService:       settingsService,
+		notifier:              notifier,
+		onSendTimeChanged:     onSendTimeChanged,
 		pages:                 pages,
 	}, nil
 }
@@ -84,6 +118,7 @@ func (s *Server) Run(ctx context.Context) {
 	mux.HandleFunc("POST /challenges", s.handleChallengeCreate)
 	mux.HandleFunc("GET /days", s.handleDays)
 	mux.HandleFunc("POST /days", s.handleDaySave)
+	mux.HandleFunc("POST /days/send-time", s.handleSendTimeSave)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.cfg.Port),
@@ -128,8 +163,6 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 }
 
 func (s *Server) render(w http.ResponseWriter, page string, data pageData) {
-	data.MaxFileMB = s.cfg.MaxFileMB
-
 	var buf bytes.Buffer
 	if err := s.pages[page].ExecuteTemplate(&buf, "layout", data); err != nil {
 		slog.Error("Server.render", "page", page, "Error", err)

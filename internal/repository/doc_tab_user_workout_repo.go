@@ -17,17 +17,15 @@ func NewDocTabUserWorkoutRepo(db *pgxpool.Pool) *DocTabUserWorkoutRepo {
 	return &DocTabUserWorkoutRepo{db: db}
 }
 
-// GetDue возвращает тренировки, которые надо отправить на дату date и ещё не отправлены.
-// Сам файл не грузим, он нужен только если у тренировки ещё нет tg_file_id.
+// GetDue возвращает тренировки, которые надо отправить на дату date и ещё не отправлены
 func (r *DocTabUserWorkoutRepo) GetDue(ctx context.Context, date time.Time) ([]model.DueWorkout, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT tuw.id, u.tg_id, t.id, t.day_number, t.description,
-		       COALESCE(t.file_name, ''), COALESCE(t.mime_type, ''), COALESCE(t.tg_file_id, ''),
-		       (t.file IS NOT NULL)
+		SELECT tuw.id, u.tg_id, p.chat_id, p.message_id
 		FROM doc_tab_user_workouts tuw
 		JOIN doc_user_workouts uw ON uw.id = tuw.doc_user_workout_id
 		JOIN users u ON u.id = uw.user_id
 		JOIN doc_tab_workouts t ON t.id = tuw.doc_tab_workout_id
+		JOIN channel_posts p ON p.id = t.channel_post_id
 		WHERE tuw.send_date = $1 AND tuw.sent_at IS NULL
 		ORDER BY t.id, tuw.id
 	`, date)
@@ -39,10 +37,7 @@ func (r *DocTabUserWorkoutRepo) GetDue(ctx context.Context, date time.Time) ([]m
 	var list []model.DueWorkout
 	for rows.Next() {
 		var w model.DueWorkout
-		err := rows.Scan(
-			&w.ID, &w.TgID, &w.DocTabWorkoutID, &w.DayNumber, &w.Description,
-			&w.FileName, &w.MimeType, &w.TgFileID, &w.HasFile,
-		)
+		err := rows.Scan(&w.ID, &w.TgID, &w.SourceChatID, &w.SourceMessageID)
 		if err != nil {
 			return nil, err
 		}

@@ -15,19 +15,7 @@ func NewDocTabWorkoutService(r *repository.DocTabWorkoutRepo) *DocTabWorkoutServ
 	return &DocTabWorkoutService{repo: r}
 }
 
-// Save возвращает replaced == true, если тренировка этого дня уже была и перезаписана
-func (s *DocTabWorkoutService) Save(ctx context.Context, w model.DocTabWorkout) (bool, error) {
-	return s.repo.Save(ctx, w)
-}
-
-func (s *DocTabWorkoutService) GetAllInfo(ctx context.Context) ([]model.DocTabWorkoutInfo, error) {
-	return s.repo.GetAllInfo(ctx)
-}
-
-func (s *DocTabWorkoutService) GetFile(ctx context.Context, id int64) ([]byte, error) {
-	return s.repo.GetFile(ctx, id)
-}
-
-func (s *DocTabWorkoutService) SetTgFileID(ctx context.Context, id int64, tgFileID string) error {
-	return s.repo.SetTgFileID(ctx, id, tgFileID)
+// SaveAll возвращает, сколько дней добавлено и сколько заменено
+func (s *DocTabWorkoutService) SaveAll(ctx context.Context, list []model.DocTabWorkout) (int, int, error) {
+	return s.repo.SaveAll(ctx, list)
 }

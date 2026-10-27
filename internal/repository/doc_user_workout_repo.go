@@ -21,25 +21,27 @@ func NewDocUserWorkoutRepo(db *pgxpool.Pool) *DocUserWorkoutRepo {
 
 // ConfirmPayment в одной транзакции создаёт doc_user_workouts для выбранного челленджа
 // и расписание doc_tab_user_workouts: send_date = startDate + day_number - 1
-func (r *DocUserWorkoutRepo) ConfirmPayment(ctx context.Context, userID int64, startDate time.Time) error {
+func (r *DocUserWorkoutRepo) ConfirmPayment(ctx context.Context, userID int64, startDate time.Time) (model.PaymentConfirmation, error) {
+	result := model.PaymentConfirmation{StartDate: startDate}
+
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return err
+		return result, err
 	}
 	defer tx.Rollback(ctx)
 
 	var docWorkoutID *int64
 	err = tx.QueryRow(ctx, `
-		SELECT doc_workout_id FROM users WHERE id = $1 FOR UPDATE
-	`, userID).Scan(&docWorkoutID)
+		SELECT tg_id, doc_workout_id FROM users WHERE id = $1 FOR UPDATE
+	`, userID).Scan(&result.TgID, &docWorkoutID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return model.ErrUserNotFound
+		return result, model.ErrUserNotFound
 	}
 	if err != nil {
-		return err
+		return result, err
 	}
 	if docWorkoutID == nil {
-		return model.ErrNoChallengeSelected
+		return result, model.ErrNoChallengeSelected
 	}
 
 	var docUserWorkoutID int64
@@ -50,10 +52,10 @@ func (r *DocUserWorkoutRepo) ConfirmPayment(ctx context.Context, userID int64, s
 		RETURNING id
 	`, userID, *docWorkoutID, startDate).Scan(&docUserWorkoutID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return model.ErrAlreadyPaid
+		return result, model.ErrAlreadyPaid
 	}
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -63,8 +65,15 @@ func (r *DocUserWorkoutRepo) ConfirmPayment(ctx context.Context, userID int64, s
 		WHERE doc_workout_id = $3
 	`, docUserWorkoutID, startDate, *docWorkoutID)
 	if err != nil {
-		return err
+		return result, err
 	}
 
-	return tx.Commit(ctx)
+	err = tx.QueryRow(ctx, `
+		SELECT name FROM doc_workouts WHERE id = $1
+	`, *docWorkoutID).Scan(&result.DocWorkoutName)
+	if err != nil {
+		return result, err
+	}
+
+	return result, tx.Commit(ctx)
 }

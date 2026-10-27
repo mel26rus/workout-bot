@@ -18,29 +18,34 @@ import (
 type MainFlow struct {
 	userService              *service.UserService
 	docWorkoutService        *service.DocWorkoutService
-	docTabWorkoutService     *service.DocTabWorkoutService
 	docTabUserWorkoutService *service.DocTabUserWorkoutService
+	channelPostService       *service.ChannelPostService
+	settingsService          *service.SettingsService
 }
 
 // Response: что бот должен показать.
 // Text пустой, Keyboard есть: меняем только кнопки сообщения.
 // Оба пустые: ничего не меняем.
+// Toast - короткое всплывающее сообщение человеку по нажатию кнопки.
 type Response struct {
 	Text     string
 	Keyboard *tgbotapi.InlineKeyboardMarkup
+	Toast    string
 }
 
 func NewMainFlow(
 	user *service.UserService,
 	docWorkout *service.DocWorkoutService,
-	docTabWorkout *service.DocTabWorkoutService,
 	docTabUserWorkout *service.DocTabUserWorkoutService,
+	channelPost *service.ChannelPostService,
+	settings *service.SettingsService,
 ) *MainFlow {
 	return &MainFlow{
 		userService:              user,
 		docWorkoutService:        docWorkout,
-		docTabWorkoutService:     docTabWorkout,
 		docTabUserWorkoutService: docTabUserWorkout,
+		channelPostService:       channelPost,
+		settingsService:          settings,
 	}
 }
 
@@ -74,9 +79,6 @@ func (f *MainFlow) HandleCallback(ctx context.Context, tgUserID int64, data stri
 
 	switch {
 
-	case data == constNoop:
-		return Response{}, nil
-
 	case strings.HasPrefix(data, constWorkoutSelect):
 		id, err := strconv.ParseInt(strings.TrimPrefix(data, constWorkoutSelect), 10, 64)
 		if err != nil {
@@ -92,7 +94,7 @@ func (f *MainFlow) HandleCallback(ctx context.Context, tgUserID int64, data stri
 		if err := f.docTabUserWorkoutService.MarkDone(ctx, id, tgUserID); err != nil {
 			return Response{}, err
 		}
-		return Response{Keyboard: buildDoneStubInline()}, nil
+		return Response{Keyboard: buildEmptyInline(), Toast: constDoneToast}, nil
 	}
 
 	return Response{}, fmt.Errorf("unknown callback: %s", data)
@@ -125,14 +127,9 @@ func (f *MainFlow) selectChallenge(ctx context.Context, tgUserID int64, docWorko
 	return Response{Text: text, Keyboard: buildChallengesInline(list, docWorkoutID)}, nil
 }
 
-// BuildWorkoutResponse собирает сообщение с тренировкой дня и кнопкой «Выполнил»
-func (f *MainFlow) BuildWorkoutResponse(w model.DueWorkout) Response {
-	text := w.Description
-	if strings.TrimSpace(text) == "" {
-		text = fmt.Sprintf("Тренировка дня %d", w.DayNumber)
-	}
-
-	return Response{Text: text, Keyboard: buildDoneInline(w.ID)}
+// BuildWorkoutKeyboard собирает кнопку «Выполнил» для тренировки дня
+func (f *MainFlow) BuildWorkoutKeyboard(w model.DueWorkout) *tgbotapi.InlineKeyboardMarkup {
+	return buildDoneInline(w.ID)
 }
 
 func (f *MainFlow) GetAdminTgIDs(ctx context.Context) ([]int64, error) {
@@ -143,12 +140,12 @@ func (f *MainFlow) GetDueWorkouts(ctx context.Context, date time.Time) ([]model.
 	return f.docTabUserWorkoutService.GetDue(ctx, date)
 }
 
-func (f *MainFlow) GetWorkoutFile(ctx context.Context, docTabWorkoutID int64) ([]byte, error) {
-	return f.docTabWorkoutService.GetFile(ctx, docTabWorkoutID)
+func (f *MainFlow) SaveChannelPost(ctx context.Context, p model.ChannelPost) error {
+	return f.channelPostService.Save(ctx, p)
 }
 
-func (f *MainFlow) SaveWorkoutFileID(ctx context.Context, docTabWorkoutID int64, tgFileID string) error {
-	return f.docTabWorkoutService.SetTgFileID(ctx, docTabWorkoutID, tgFileID)
+func (f *MainFlow) GetSendTime(ctx context.Context) (string, error) {
+	return f.settingsService.GetSendTime(ctx)
 }
 
 func (f *MainFlow) MarkWorkoutSent(ctx context.Context, docTabUserWorkoutID int64) error {

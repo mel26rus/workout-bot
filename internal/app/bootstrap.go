@@ -36,9 +36,12 @@ func (a *App) Boot() error {
 		return fmt.Errorf("time_zone: %w", err)
 	}
 
-	sendTime, err := time.Parse("15:04", a.Config.SendTime)
+	_, _, err = service.ParseSendTime(a.Config.SendTime)
 	if err != nil {
-		return fmt.Errorf("send_time должно быть в формате ЧЧ:ММ, например \"08:00\": %w", err)
+		return fmt.Errorf("send_time, например \"08:00\": %w", err)
+	}
+	if a.Config.ChannelID == 0 {
+		slog.Warn("channel_id не задан в config.yaml, посты канала не принимаются: напишите пост в канал, ID будет в логе")
 	}
 
 	// bot api
@@ -67,6 +70,8 @@ func (a *App) Boot() error {
 	userRepo := repository.NewUserRepo(a.DB)
 	docWorkoutRepo := repository.NewDocWorkoutRepo(a.DB)
 	docTabWorkoutRepo := repository.NewDocTabWorkoutRepo(a.DB)
+	channelPostRepo := repository.NewChannelPostRepo(a.DB)
+	settingsRepo := repository.NewSettingsRepo(a.DB)
 	docUserWorkoutRepo := repository.NewDocUserWorkoutRepo(a.DB)
 	docTabUserWorkoutRepo := repository.NewDocTabUserWorkoutRepo(a.DB)
 	slog.Info("Repositories inited")
@@ -76,32 +81,40 @@ func (a *App) Boot() error {
 	docTabWorkoutService := service.NewDocTabWorkoutService(docTabWorkoutRepo)
 	docUserWorkoutService := service.NewDocUserWorkoutService(docUserWorkoutRepo, loc)
 	docTabUserWorkoutService := service.NewDocTabUserWorkoutService(docTabUserWorkoutRepo)
+	channelPostService := service.NewChannelPostService(channelPostRepo)
+	settingsService := service.NewSettingsService(settingsRepo, a.Config.SendTime)
 	slog.Info("Services inited")
 	// flow
 	mainFlow := flow.NewMainFlow(
 		userService,
 		docWorkoutService,
-		docTabWorkoutService,
 		docTabUserWorkoutService,
+		channelPostService,
+		settingsService,
 	)
 	slog.Info("Flows inited")
 
-	a.handler = bot.NewHandler(a.botAPI, mainFlow, loc)
+	a.handler = bot.NewHandler(a.botAPI, mainFlow, loc, a.Config.ChannelID)
 
 	sch := scheduler.New()
 
 	sch.Add(
-		scheduler.NewSendWorkoutJob(a.handler, sendTime.Hour(), sendTime.Minute(), loc),
+		scheduler.NewSendWorkoutJob(a.handler, settingsService, loc),
 	)
 
 	a.Scheduler = sch
 
 	a.web, err = web.NewServer(
 		a.Config.Web,
+		a.Config.TimeZone,
 		userService,
 		docWorkoutService,
 		docTabWorkoutService,
 		docUserWorkoutService,
+		channelPostService,
+		settingsService,
+		a.handler,
+		sch.Reset,
 	)
 	if err != nil {
 		return fmt.Errorf("web server: %w", err)

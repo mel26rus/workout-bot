@@ -36,10 +36,15 @@ func (s *Server) handleUserPaid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.docUserWorkoutService.ConfirmPayment(r.Context(), userID)
+	confirmation, err := s.docUserWorkoutService.ConfirmPayment(r.Context(), userID)
 	switch {
 	case err == nil:
-		redirectMsg(w, r, "/users", "Оплата подтверждена, старт завтра")
+		msg := "Оплата подтверждена, старт завтра. Человеку отправлено сообщение"
+		if err := s.notifier.NotifyPaymentConfirmed(r.Context(), confirmation); err != nil {
+			slog.Error(fn_name+" NotifyPaymentConfirmed", "userID", userID, "Error", err)
+			msg = "Оплата подтверждена, старт завтра. Сообщение человеку отправить не удалось, подробности в логе"
+		}
+		redirectMsg(w, r, "/users", msg)
 	case errors.Is(err, model.ErrUserNotFound),
 		errors.Is(err, model.ErrNoChallengeSelected),
 		errors.Is(err, model.ErrAlreadyPaid):

@@ -11,8 +11,10 @@ import (
 const (
 	constWorkoutSelect = "workout:"
 	constWorkoutDone   = "done:"
-	constNoop          = "noop"
 )
+
+// всплывающее сообщение после нажатия «Выполнил»
+const constDoneToast = "🔥 Засчитано! Так держать!"
 
 // buildChallengesInline: по кнопке на челлендж, выбранный отмечен галочкой
 func buildChallengesInline(list []model.DocWorkout, selectedID int64) *tgbotapi.InlineKeyboardMarkup {
@@ -38,18 +40,13 @@ func buildChallengesInline(list []model.DocWorkout, selectedID int64) *tgbotapi.
 func buildDoneInline(docTabUserWorkoutID int64) *tgbotapi.InlineKeyboardMarkup {
 	ikb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ Выполнил", fmt.Sprintf("%s%d", constWorkoutDone, docTabUserWorkoutID)),
+			tgbotapi.NewInlineKeyboardButtonData("💪 Выполнил", fmt.Sprintf("%s%d", constWorkoutDone, docTabUserWorkoutID)),
 		),
 	)
 	return &ikb
 }
 
-// buildDoneStubInline: кнопка после отметки, нажатие ничего не делает
-func buildDoneStubInline() *tgbotapi.InlineKeyboardMarkup {
-	ikb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ Выполнено", constNoop),
-		),
-	)
-	return &ikb
+// buildEmptyInline: пустая клавиатура, по ней кнопки у сообщения убираются
+func buildEmptyInline() *tgbotapi.InlineKeyboardMarkup {
+	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
 }

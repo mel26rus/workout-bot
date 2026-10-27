@@ -4,11 +4,6 @@ package model
 type DueWorkout struct {
 	ID              int64 // doc_tab_user_workouts.id
 	TgID            int64
-	DocTabWorkoutID int64
-	DayNumber       int
-	Description     string
-	FileName        string
-	MimeType        string
-	TgFileID        string
-	HasFile         bool
+	SourceChatID    int64
+	SourceMessageID int
 }

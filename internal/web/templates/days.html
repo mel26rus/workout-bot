@@ -1,70 +1,71 @@
 {{define "content"}}
 <h2>Тренировки</h2>
 
-<h3>Добавить тренировку</h3>
-<form method="post" action="/days" enctype="multipart/form-data" id="day-form">
-<label for="doc_workout_id">Челлендж</label>
-<select id="doc_workout_id" name="doc_workout_id" required>
-{{range .Challenges}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+<form method="post" action="/days/send-time">
+<p>Часовой пояс: <b>{{.TimeZone}}</b></p>
+<label for="send_time">Время рассылки</label>
+<input type="time" id="send_time" name="send_time" value="{{.SendTime}}" required>
+<button type="submit">Сохранить</button>
+</form>
+
+<h3>Посты из канала</h3>
+<form method="post" action="/days" id="days-form">
+<table>
+<tr><th>Челлендж</th><th>День</th><th>Описание</th><th>Файл</th></tr>
+{{range $p := .Posts}}
+<tr data-post="{{$p.ID}}" data-saved-challenge="{{$p.DocWorkoutID}}" data-saved-day="{{$p.DayNumber}}">
+<td>
+<select name="challenge_{{$p.ID}}">
+<option value="">—</option>
+{{range $.Challenges}}<option value="{{.ID}}"{{if eq .ID $p.DocWorkoutID}} selected{{end}}>{{.Name}}</option>{{end}}
 </select>
-<label for="day_number">Номер дня</label>
-<input type="number" id="day_number" name="day_number" min="1" required>
-<label for="description">Описание</label>
-<textarea id="description" name="description" rows="6"></textarea>
-<label for="file">Файл (до {{.MaxFileMB}} МБ)</label>
-<input type="file" id="file" name="file">
+</td>
+<td><input type="number" name="day_{{$p.ID}}" min="1"{{if $p.DayNumber}} value="{{$p.DayNumber}}"{{end}}></td>
+<td class="text">{{$p.Text}}</td>
+<td>{{mediaLabel $p.MediaType}}{{if $p.FileName}}: {{$p.FileName}}{{end}}{{if $p.FileSize}} ({{mb $p.FileSize}}){{end}}</td>
+</tr>
+{{else}}
+<tr><td colspan="4">Постов из канала пока нет</td></tr>
+{{end}}
+</table>
 <p id="overwrite-warning" class="warn" hidden></p>
 <p><button type="submit">Сохранить</button></p>
 </form>
 
-<h3>Загруженные тренировки</h3>
-<table>
-<tr><th>Челлендж</th><th>День</th><th>Описание</th><th>Файл</th></tr>
-{{range .Days}}
-<tr data-challenge="{{.DocWorkoutID}}" data-day="{{.DayNumber}}">
-<td>{{.DocWorkoutName}}</td>
-<td>{{.DayNumber}}</td>
-<td>{{.Description}}</td>
-<td>{{if .FileName}}{{.FileName}} ({{mb .FileSize}}){{else}}—{{end}}</td>
-</tr>
-{{else}}
-<tr><td colspan="4">Тренировок пока нет</td></tr>
-{{end}}
-</table>
-
 <script>
-// Предупреждаем, если тренировка этого дня уже есть и будет перезаписана
+// Предупреждаем, если выбранный день уже занят другим постом и тренировка будет заменена
 (function () {
-  var form = document.getElementById('day-form');
-  var sel = document.getElementById('doc_workout_id');
-  var dayInput = document.getElementById('day_number');
-  var fileInput = document.getElementById('file');
+  var form = document.getElementById('days-form');
   var warning = document.getElementById('overwrite-warning');
+  var rows = Array.prototype.slice.call(form.querySelectorAll('tr[data-post]'));
 
-  function overwriteText() {
-    var day = parseInt(dayInput.value, 10);
-    if (!sel.value || isNaN(day)) return '';
-    var row = document.querySelector('tr[data-challenge="' + sel.value + '"][data-day="' + day + '"]');
-    if (!row) return '';
-    var name = sel.options[sel.selectedIndex].text;
-    var what = fileInput.files.length > 0
-      ? 'Описание и файл будут заменены.'
-      : 'Описание будет заменено, прежний файл останется.';
-    return 'Тренировка дня ' + day + ' челленджа «' + name + '» уже есть и будет перезаписана. ' + what;
+  function warnings() {
+    var list = [];
+    rows.forEach(function (row) {
+      var sel = row.querySelector('select');
+      var day = parseInt(row.querySelector('input').value, 10);
+      if (!sel.value || isNaN(day)) return;
+      if (sel.value === row.dataset.savedChallenge && String(day) === row.dataset.savedDay) return;
+      rows.forEach(function (other) {
+        if (other !== row && other.dataset.savedChallenge === sel.value && other.dataset.savedDay === String(day)) {
+          list.push('Тренировка дня ' + day + ' челленджа «' + sel.options[sel.selectedIndex].text + '» уже есть и будет заменена.');
+        }
+      });
+    });
+    return list;
   }
 
   function update() {
-    var text = overwriteText();
-    warning.textContent = text;
-    warning.hidden = text === '';
+    var list = warnings();
+    warning.textContent = list.join(' ');
+    warning.hidden = list.length === 0;
   }
 
-  sel.addEventListener('change', update);
-  dayInput.addEventListener('input', update);
-  fileInput.addEventListener('change', update);
+  form.addEventListener('change', update);
+  form.addEventListener('input', update);
   form.addEventListener('submit', function (e) {
-    var text = overwriteText();
-    if (text !== '' && !confirm(text + '\n\nПродолжить?')) e.preventDefault();
+    var list = warnings();
+    if (list.length > 0 && !confirm(list.join('\n') + '\n\nПродолжить?')) e.preventDefault();
   });
   update();
 })();

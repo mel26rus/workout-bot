@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"workout-bot/internal/model"
 	"workout-bot/internal/repository"
 )
 
@@ -17,7 +18,7 @@ func NewDocUserWorkoutService(r *repository.DocUserWorkoutRepo, loc *time.Locati
 }
 
 // ConfirmPayment подтверждает оплату: старт челленджа на следующий день по времени из конфига (МСК)
-func (s *DocUserWorkoutService) ConfirmPayment(ctx context.Context, userID int64) error {
+func (s *DocUserWorkoutService) ConfirmPayment(ctx context.Context, userID int64) (model.PaymentConfirmation, error) {
 	now := time.Now().In(s.loc)
 	startDate := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
 

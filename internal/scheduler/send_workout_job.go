@@ -7,21 +7,20 @@ import (
 	"time"
 
 	"workout-bot/internal/bot"
+	"workout-bot/internal/service"
 )
 
 type SendWorkoutJob struct {
-	Handler *bot.Handler
-	Hour    int
-	Minute  int
-	Loc     *time.Location
+	Handler  *bot.Handler
+	Settings *service.SettingsService
+	Loc      *time.Location
 }
 
-func NewSendWorkoutJob(handler *bot.Handler, hour int, minute int, loc *time.Location) *SendWorkoutJob {
+func NewSendWorkoutJob(handler *bot.Handler, settings *service.SettingsService, loc *time.Location) *SendWorkoutJob {
 	return &SendWorkoutJob{
-		Handler: handler,
-		Hour:    hour,
-		Minute:  minute,
-		Loc:     loc,
+		Handler:  handler,
+		Settings: settings,
+		Loc:      loc,
 	}
 }
 
@@ -29,14 +28,32 @@ func (j *SendWorkoutJob) Name() string {
 	return "Send Workout Job"
 }
 
+// sendTime читает время рассылки при каждом расчёте, поэтому смена времени в веб-модуле подхватывается без перезапуска
+func (j *SendWorkoutJob) sendTime() (int, int, error) {
+	value, err := j.Settings.GetSendTime(context.Background())
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return service.ParseSendTime(value)
+}
+
 func (j *SendWorkoutJob) NextRun(now time.Time) time.Time {
 
 	n := now.In(j.Loc)
+
+	hour, minute, err := j.sendTime()
+	if err != nil {
+		// не смогли прочитать время: пробуем снова через час, планировщик не должен остановиться
+		slog.Error("j.NextRun sendTime", "name", j.Name(), "Error", err)
+		return n.Add(time.Hour)
+	}
+
 	next := time.Date(
 		n.Year(),
 		n.Month(),
 		n.Day(),
-		j.Hour, j.Minute, 0, 0,
+		hour, minute, 0, 0,
 		j.Loc,
 	)
 

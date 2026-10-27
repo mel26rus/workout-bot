@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"workout-bot/internal/dateutil"
 	"workout-bot/internal/flow"
@@ -16,29 +15,29 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// лимит подписи к файлу в Telegram
-const captionLimit = 1024
-
 // пауза между отправками, у Telegram лимит около 30 сообщений в секунду
 const sendDelay = 50 * time.Millisecond
 
 type Handler struct {
-	bot  *tgbotapi.BotAPI
-	flow *flow.MainFlow
-	loc  *time.Location
+	bot       *tgbotapi.BotAPI
+	flow      *flow.MainFlow
+	loc       *time.Location
+	channelID int64
 }
 
-func NewHandler(bot *tgbotapi.BotAPI, flow *flow.MainFlow, loc *time.Location) *Handler {
+func NewHandler(bot *tgbotapi.BotAPI, flow *flow.MainFlow, loc *time.Location, channelID int64) *Handler {
 	return &Handler{
-		bot:  bot,
-		flow: flow,
-		loc:  loc,
+		bot:       bot,
+		flow:      flow,
+		loc:       loc,
+		channelID: channelID,
 	}
 }
 
 func (h *Handler) Start(ctx context.Context) {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 30
+	u.AllowedUpdates = []string{"message", "callback_query", "channel_post", "edited_channel_post"}
 
 	updates := h.bot.GetUpdatesChan(u)
 
@@ -59,6 +58,10 @@ func (h *Handler) Start(ctx context.Context) {
 				h.handleCallback(ctx, update.CallbackQuery)
 			} else if update.Message != nil {
 				h.handleMessage(ctx, update.Message)
+			} else if update.ChannelPost != nil {
+				h.handleChannelPost(ctx, update.ChannelPost)
+			} else if update.EditedChannelPost != nil {
+				h.handleChannelPost(ctx, update.EditedChannelPost)
 			}
 		}
 	}
@@ -111,8 +114,8 @@ func (h *Handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 		return
 	}
 
-	// убираем «часики» на кнопке
-	_, err = h.bot.Request(tgbotapi.NewCallback(cb.ID, ""))
+	// убираем «часики» на кнопке, response.Toast показывается всплывающим сообщением
+	_, err = h.bot.Request(tgbotapi.NewCallback(cb.ID, response.Toast))
 	if err != nil {
 		slog.Error(fn_name+" error_2", "Error", err)
 	}
@@ -136,6 +139,72 @@ func (h *Handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 	if err != nil && !strings.Contains(err.Error(), "message is not modified") {
 		slog.Error(fn_name+" error_3", "Error", err)
 	}
+}
+
+// handleChannelPost запоминает пост канала тренера, из него потом собирается тренировка
+func (h *Handler) handleChannelPost(ctx context.Context, msg *tgbotapi.Message) {
+	const fn_name = "Handler.handleChannelPost"
+
+	if msg.Chat.ID != h.channelID {
+		slog.Warn(fn_name+" пост не из канала тренера, проверьте channel_id в config.yaml", "chatID", msg.Chat.ID, "title", msg.Chat.Title)
+		return
+	}
+
+	err := h.flow.SaveChannelPost(ctx, channelPostFromMessage(msg))
+	if err != nil {
+		slog.Error(fn_name, "messageID", msg.MessageID, "Error", err)
+	}
+}
+
+// channelPostFromMessage берёт из поста текст (или подпись) и сведения о файле для таблицы на странице тренировок
+func channelPostFromMessage(msg *tgbotapi.Message) model.ChannelPost {
+	p := model.ChannelPost{
+		ChatID:    msg.Chat.ID,
+		MessageID: msg.MessageID,
+		Text:      msg.Text,
+		MediaType: "other",
+		PostDate:  msg.Time(),
+	}
+	if msg.Caption != "" {
+		p.Text = msg.Caption
+	}
+
+	switch {
+	case msg.Video != nil:
+		p.MediaType = "video"
+		p.FileName = msg.Video.FileName
+		p.FileSize = int64(msg.Video.FileSize)
+	case msg.Document != nil:
+		p.MediaType = "document"
+		p.FileName = msg.Document.FileName
+		p.FileSize = int64(msg.Document.FileSize)
+	case len(msg.Photo) > 0:
+		p.MediaType = "photo"
+		p.FileSize = int64(msg.Photo[len(msg.Photo)-1].FileSize)
+	case msg.Text != "":
+		p.MediaType = "text"
+	}
+
+	return p
+}
+
+// NotifyPaymentConfirmed сообщает человеку, что тренер подтвердила оплату
+func (h *Handler) NotifyPaymentConfirmed(ctx context.Context, c model.PaymentConfirmation) error {
+	sendTime, err := h.flow.GetSendTime(ctx)
+	if err != nil {
+		return err
+	}
+
+	text := fmt.Sprintf(
+		"Оплата челленджа «%s» получена и подтверждена. Первая тренировка %s в %s.",
+		c.DocWorkoutName, c.StartDate.Format("02.01.2006"), sendTime,
+	)
+	_, err = h.bot.Send(tgbotapi.NewMessage(c.TgID, text))
+	if err != nil {
+		return fmt.Errorf("send payment confirmation: %w", err)
+	}
+
+	return nil
 }
 
 // notifyAdmins сообщает всем админам о новом пользователе
@@ -177,15 +246,12 @@ func (h *Handler) HandleSendWorkouts(ctx context.Context) {
 	}
 	slog.Debug(fn_name, "date", date.Format("2006-01-02"), "count", len(list))
 
-	// file_id, полученные в этой рассылке, чтобы не грузить один и тот же файл каждому
-	fileIDs := make(map[int64]string)
-
 	for _, w := range list {
 		if ctx.Err() != nil {
 			return
 		}
 
-		err := h.sendWorkout(ctx, w, fileIDs)
+		err := h.sendWorkout(w)
 		if err != nil {
 			slog.Error(fn_name+" sendWorkout", "tgID", w.TgID, "docTabUserWorkoutID", w.ID, "Error", err)
 			continue
@@ -202,91 +268,15 @@ func (h *Handler) HandleSendWorkouts(ctx context.Context) {
 	slog.Debug("-" + fn_name)
 }
 
-func (h *Handler) sendWorkout(ctx context.Context, w model.DueWorkout, fileIDs map[int64]string) error {
-	response := h.flow.BuildWorkoutResponse(w)
-
-	if !w.HasFile {
-		return h.sendText(w.TgID, response)
-	}
-
-	var file tgbotapi.RequestFileData
-	fileID := fileIDs[w.DocTabWorkoutID]
-	if fileID == "" {
-		fileID = w.TgFileID
-	}
-	if fileID != "" {
-		file = tgbotapi.FileID(fileID)
-	} else {
-		data, err := h.flow.GetWorkoutFile(ctx, w.DocTabWorkoutID)
-		if err != nil {
-			return err
-		}
-		file = tgbotapi.FileBytes{Name: w.FileName, Bytes: data}
-	}
-
-	// длинный текст не влезает в подпись: файл без подписи, текст отдельным сообщением
-	caption := response.Text
-	separateText := utf8.RuneCountInString(caption) > captionLimit
-	if separateText {
-		caption = ""
-	}
-
-	var sent tgbotapi.Message
-	var err error
-	var newFileID string
-
-	if strings.HasPrefix(w.MimeType, "video/") {
-		video := tgbotapi.NewVideo(w.TgID, file)
-		video.Caption = caption
-		video.ProtectContent = true
-		if !separateText {
-			video.ReplyMarkup = response.Keyboard
-		}
-		sent, err = h.bot.Send(video)
-		if err == nil && sent.Video != nil {
-			newFileID = sent.Video.FileID
-		}
-	} else {
-		document := tgbotapi.NewDocument(w.TgID, file)
-		document.Caption = caption
-		document.ProtectContent = true
-		if !separateText {
-			document.ReplyMarkup = response.Keyboard
-		}
-		sent, err = h.bot.Send(document)
-		if err == nil && sent.Document != nil {
-			newFileID = sent.Document.FileID
-		}
-	}
-	if err != nil {
-		return err
-	}
-
-	// запоминаем file_id, дальше файл уходит по нему
-	if fileID == "" && newFileID != "" {
-		fileIDs[w.DocTabWorkoutID] = newFileID
-		err = h.flow.SaveWorkoutFileID(ctx, w.DocTabWorkoutID, newFileID)
-		if err != nil {
-			slog.Error("Handler.sendWorkout SaveWorkoutFileID", "docTabWorkoutID", w.DocTabWorkoutID, "Error", err)
-		}
-	}
-
-	if separateText {
-		return h.sendText(w.TgID, response)
-	}
-
-	return nil
-}
-
-func (h *Handler) sendText(chatID int64, response flow.Response) error {
-	msg := tgbotapi.NewMessage(chatID, response.Text)
+// sendWorkout копирует пост канала человеку: без пометки «переслано» и с защитой от пересылки и сохранения
+func (h *Handler) sendWorkout(w model.DueWorkout) error {
+	msg := tgbotapi.NewCopyMessage(w.TgID, w.SourceChatID, w.SourceMessageID)
 	msg.ProtectContent = true
-	if response.Keyboard != nil {
-		msg.ReplyMarkup = response.Keyboard
-	}
+	msg.ReplyMarkup = h.flow.BuildWorkoutKeyboard(w)
+
 	_, err := h.bot.Send(msg)
 	if err != nil {
-		return fmt.Errorf("send text: %w", err)
+		return fmt.Errorf("copy message: %w", err)
 	}
 
 	return nil
