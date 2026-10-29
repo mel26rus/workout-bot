@@ -1,0 +1,8 @@
+{$DUCKDNS_DOMAIN} {
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+	}
+
+	# Caddy сам ставит X-Forwarded-For с настоящим IP клиента, по нему бот считает неверные пароли
+	reverse_proxy bot:8080
+}

@@ -3,7 +3,6 @@ package bot
 import (
 	"context"
 	"fmt"
-	"html"
 	"log/slog"
 	"strings"
 	"time"
@@ -209,7 +208,17 @@ func (h *Handler) NotifyPaymentConfirmed(ctx context.Context, c model.PaymentCon
 
 // notifyAdmins сообщает всем админам о новом пользователе
 func (h *Handler) notifyAdmins(ctx context.Context, user *tgbotapi.User) {
-	const fn_name = "Handler.notifyAdmins"
+	name := strings.TrimSpace(user.FirstName + " " + user.LastName)
+	if user.UserName != "" {
+		name += " (@" + user.UserName + ")"
+	}
+
+	h.NotifyAdmins(ctx, "Новый пользователь: "+name)
+}
+
+// NotifyAdmins отправляет текст всем админам, ошибки пишет в лог
+func (h *Handler) NotifyAdmins(ctx context.Context, text string) {
+	const fn_name = "Handler.NotifyAdmins"
 
 	adminIDs, err := h.flow.GetAdminTgIDs(ctx)
 	if err != nil {
@@ -217,16 +226,8 @@ func (h *Handler) notifyAdmins(ctx context.Context, user *tgbotapi.User) {
 		return
 	}
 
-	name := strings.TrimSpace(user.FirstName + " " + user.LastName)
-	if user.UserName != "" {
-		name += " (@" + user.UserName + ")"
-	}
-	text := "Новый пользователь: " + html.EscapeString(name)
-
 	for _, adminID := range adminIDs {
-		msg := tgbotapi.NewMessage(adminID, text)
-		msg.ParseMode = tgbotapi.ModeHTML
-		_, err := h.bot.Send(msg)
+		_, err := h.bot.Send(tgbotapi.NewMessage(adminID, text))
 		if err != nil {
 			slog.Error(fn_name+" error_1", "adminID", adminID, "Error", err)
 		}

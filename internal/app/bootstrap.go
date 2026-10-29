@@ -106,13 +106,14 @@ func (a *App) Boot() error {
 
 	a.web, err = web.NewServer(
 		a.Config.Web,
-		a.Config.TimeZone,
+		loc,
 		userService,
 		docWorkoutService,
 		docTabWorkoutService,
 		docUserWorkoutService,
 		channelPostService,
 		settingsService,
+		a.handler,
 		a.handler,
 		sch.Reset,
 	)

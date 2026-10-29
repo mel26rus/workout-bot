@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"workout-bot/internal/config"
@@ -31,6 +32,11 @@ type pageData struct {
 	Posts        []model.ChannelPostInfo
 }
 
+// AdminNotifier отправляет текст всем админам в Telegram
+type AdminNotifier interface {
+	NotifyAdmins(ctx context.Context, text string)
+}
+
 // PaymentNotifier сообщает человеку в Telegram, что оплата подтверждена
 type PaymentNotifier interface {
 	NotifyPaymentConfirmed(ctx context.Context, c model.PaymentConfirmation) error
@@ -46,13 +52,15 @@ type Server struct {
 	channelPostService    *service.ChannelPostService
 	settingsService       *service.SettingsService
 	notifier              PaymentNotifier
+	adminNotifier         AdminNotifier
+	loginGuard            *loginGuard
 	onSendTimeChanged     func()
 	pages                 map[string]*template.Template
 }
 
 func NewServer(
 	cfg config.WebConfig,
-	timeZone string,
+	loc *time.Location,
 	userService *service.UserService,
 	docWorkoutService *service.DocWorkoutService,
 	docTabWorkoutService *service.DocTabWorkoutService,
@@ -60,6 +68,7 @@ func NewServer(
 	channelPostService *service.ChannelPostService,
 	settingsService *service.SettingsService,
 	notifier PaymentNotifier,
+	adminNotifier AdminNotifier,
 	onSendTimeChanged func(),
 ) (*Server, error) {
 
@@ -93,7 +102,7 @@ func NewServer(
 
 	return &Server{
 		cfg:                   cfg,
-		timeZone:              timeZone,
+		timeZone:              loc.String(),
 		userService:           userService,
 		docWorkoutService:     docWorkoutService,
 		docTabWorkoutService:  docTabWorkoutService,
@@ -101,6 +110,8 @@ func NewServer(
 		channelPostService:    channelPostService,
 		settingsService:       settingsService,
 		notifier:              notifier,
+		adminNotifier:         adminNotifier,
+		loginGuard:            newLoginGuard(loc),
 		onSendTimeChanged:     onSendTimeChanged,
 		pages:                 pages,
 	}, nil
@@ -149,15 +160,37 @@ func (s *Server) Run(ctx context.Context) {
 	}
 }
 
-// basicAuth пускает по одному паролю, имя пользователя любое
+// basicAuth пускает по одному паролю, имя пользователя любое.
+// Неверный пароль считается по IP: админам уходит сообщение, а перебор блокируется.
 func (s *Server) basicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, pass, ok := r.BasicAuth()
-		if !ok || subtle.ConstantTimeCompare([]byte(pass), []byte(s.cfg.Password)) != 1 {
+		ip := clientIP(r)
+		now := time.Now()
+
+		if left := s.loginGuard.blockedFor(ip, now); left > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(left.Seconds())+1))
+			http.Error(w, "Слишком много попыток, попробуйте позже", http.StatusTooManyRequests)
+			return
+		}
+
+		user, pass, ok := r.BasicAuth()
+		if !ok {
+			// браузер сначала приходит без пароля, это не ошибка входа
 			w.Header().Set("WWW-Authenticate", `Basic realm="workout"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
+
+		if subtle.ConstantTimeCompare([]byte(pass), []byte(s.cfg.Password)) != 1 {
+			slog.Warn("Web: неверный пароль", "ip", ip, "user", shortUser(user))
+			if text := s.loginGuard.fail(ip, user, now); text != "" {
+				go s.adminNotifier.NotifyAdmins(context.Background(), text)
+			}
+			w.Header().Set("WWW-Authenticate", `Basic realm="workout"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }

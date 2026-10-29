@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: workout-postgres
+    environment:
+      - POSTGRES_DB=workout_db
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - TZ=Europe/Moscow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # выполняется один раз, при создании пустой базы
+      - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    # порт только на этом компьютере: чтобы руками выставить админов (users.is_admin)
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d workout_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  bot:
+    build: .
+    container_name: workout-bot
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./Logs:/app/Logs
+    environment:
+      - TZ=Europe/Moscow
+    networks:
+      - default
+      # сеть с VPN из compose expenseBot: Telegram доступен только через него
+      - vpn-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    build: ./caddy
+    container_name: workout-caddy
+    environment:
+      - DUCKDNS_DOMAIN=${DUCKDNS_DOMAIN}
+      - DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    # на этот порт роутер пробрасывает внешний 7079
+    ports:
+      - "443:443"
+    depends_on:
+      - bot
+    restart: unless-stopped
+
+networks:
+  vpn-network:
+    external: true
+    name: ${VPN_NETWORK}
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
